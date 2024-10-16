@@ -25,6 +25,15 @@ def neg_log_likelihood(data, theta, beta):
     # Implement the function as described in the docstring.             #
     #####################################################################
     log_lklihood = 0.
+    for i, q in enumerate(data['question_id']):
+        u = data['user_id'][i]
+        c = data['is_correct'][i]
+        theta_u = theta[u]
+        beta_q = beta[q]
+        # Calculate the probability using the sigmoid function
+        p = sigmoid(theta_u - beta_q)
+        # Accumulate the log-likelihood
+        log_lklihood += c * np.log(p) + (1 - c) * np.log(1 - p)
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
@@ -52,7 +61,16 @@ def update_theta_beta(data, lr, theta, beta):
     # TODO:                                                             #
     # Implement the function as described in the docstring.             #
     #####################################################################
-    pass
+    for i, q in enumerate(data['question_id']):
+        u = data['user_id'][i]
+        c = data['is_correct'][i]
+        theta_u = theta[u]
+        beta_q = beta[q]
+        p = sigmoid(theta_u - beta_q)
+
+        # Update the gradients
+        theta[u] += lr * (c - p)
+        beta[q] -= lr * (c - p)
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
@@ -73,8 +91,8 @@ def irt(data, val_data, lr, iterations):
     :return: (theta, beta, val_acc_lst)
     """
     # TODO: Initialize theta and beta.
-    theta = None
-    beta = None
+    theta = np.random.randn(max(data["user_id"]) + 1)
+    beta = np.random.randn(max(data["question_id"]) + 1)
 
     val_acc_lst = []
 
@@ -120,7 +138,9 @@ def main():
     # Tune learning rate and number of iterations. With the implemented #
     # code, report the validation and test accuracy.                    #
     #####################################################################
-    pass
+    # Tune learning rate and number of iterations
+    lr = 0.01  # Learning rate
+    iterations = 100  # Number of iterations
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
@@ -129,7 +149,11 @@ def main():
     # TODO:                                                             #
     # Implement part (d)                                                #
     #####################################################################
-    pass
+    # Train the model
+    theta, beta, val_acc_lst = irt(train_data, val_data, lr, iterations)
+    # Evaluate on the test data
+    test_acc = evaluate(test_data, theta, beta)
+    print("Final Test Accuracy: {}".format(test_acc))
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
@@ -137,3 +161,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
