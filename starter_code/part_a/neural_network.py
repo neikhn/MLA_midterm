@@ -1,6 +1,9 @@
+# If you encounter pathing error, try the below 3 line for Python to locate the module
+# import sys
+# import os
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import *
 from torch.autograd import Variable
-
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -8,8 +11,7 @@ import torch.utils.data
 
 import numpy as np
 import torch
-
-
+# def load_data(base_path="C:/Users/adore/Downloads/starter_code/starter_code/data"):
 def load_data(base_path="../data"):
     """ Load the data in PyTorch Tensor.
 
@@ -19,9 +21,9 @@ def load_data(base_path="../data"):
         filled with 0.
         train_data: 2D sparse matrix
         valid_data: A dictionary {user_id: list,
-        user_id: list, is_correct: list}
+        question_id: list, is_correct: list}
         test_data: A dictionary {user_id: list,
-        user_id: list, is_correct: list}
+        question_id: list, is_correct: list}
     """
     train_matrix = load_train_sparse(base_path).toarray()
     valid_data = load_valid_csv(base_path)
@@ -35,7 +37,6 @@ def load_data(base_path="../data"):
     train_matrix = torch.FloatTensor(train_matrix)
 
     return zero_train_matrix, train_matrix, valid_data, test_data
-
 
 class AutoEncoder(nn.Module):
     def __init__(self, num_question, k=100):
@@ -70,7 +71,9 @@ class AutoEncoder(nn.Module):
         # Implement the function as described in the docstring.             #
         # Use sigmoid activations for f and g.                              #
         #####################################################################
-        out = inputs
+        # Apply the first linear transformation, followed by sigmoid activation.
+        latent = torch.sigmoid(self.g(inputs))
+        out = torch.sigmoid(self.h(latent))
         #####################################################################
         #                       END OF YOUR CODE                            #
         #####################################################################
@@ -95,33 +98,53 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
     # Tell PyTorch you are training the model.
     model.train()
 
-    # Define optimizers and loss function.
+    # Define optimizer.
     optimizer = optim.SGD(model.parameters(), lr=lr)
-    num_student = train_data.shape[0]
 
-    for epoch in range(0, num_epoch):
-        train_loss = 0.
+    # Loss function: Mean squared error (MSE).
+    criterion = nn.MSELoss()
 
-        for user_id in range(num_student):
-            inputs = Variable(zero_train_data[user_id]).unsqueeze(0)
-            target = inputs.clone()
+    for epoch in range(num_epoch):
+        train_loss = 0.0
 
+        # Iterate over all users
+        for user_id in range(train_data.shape[0]):
+            inputs = Variable(zero_train_data[user_id]).unsqueeze(0)  # Shape (1, feature_dim)
+            target = inputs.clone()  # Clone to keep the same shape
+
+            # Reset gradients to zero
             optimizer.zero_grad()
+
+            # Forward pass through the model
             output = model(inputs)
 
-            # Mask the target to only compute the gradient of valid entries.
-            nan_mask = np.isnan(train_data[user_id].unsqueeze(0).numpy())
-            target[0][nan_mask] = output[0][nan_mask]
+            # Create mask for NaN values in the original train_data
+            nan_mask = torch.isnan(train_data[user_id])  # Get the mask directly from the PyTorch tensor
 
-            loss = torch.sum((output - target) ** 2.)
+            # Ensure that the shapes match before assignment
+            if output.shape[1] == target.shape[1]:
+                target[0][nan_mask] = output[0][nan_mask]
+            else:
+                raise ValueError(f"Output shape {output.shape} does not match target shape {target.shape}")
+
+            # Compute the reconstruction loss
+            loss = criterion(output, target)
+
+            # Add L2 regularization term
+            weight_norm = model.get_weight_norm()
+            loss += lamb * weight_norm
+
+            # Backpropagation
             loss.backward()
-
-            train_loss += loss.item()
             optimizer.step()
 
+            # Accumulate the training loss
+            train_loss += loss.item()
+
+        # After each epoch, evaluate on validation set
         valid_acc = evaluate(model, zero_train_data, valid_data)
-        print("Epoch: {} \tTraining Cost: {:.6f}\t "
-              "Valid Acc: {}".format(epoch, train_loss, valid_acc))
+        print(f"Epoch: {epoch+1}/{num_epoch} \tTraining Loss: {train_loss:.6f}\tValidation Accuracy: {valid_acc:.4f}")
+
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
@@ -161,17 +184,38 @@ def main():
     # Try out 5 different k and select the best k using the             #
     # validation set.                                                   #
     #####################################################################
-    # Set model hyperparameters.
-    k = None
-    model = None
+# Hyperparameter tuning.
+    latent_dims = [10, 50, 100, 200, 500]  # Different values for k.
+    lambdas = [0.001, 0.01, 0.1, 1]        # Different values for λ.
+    best_valid_acc = 0
+    best_model = None
 
-    # Set optimization hyperparameters.
-    lr = None
-    num_epoch = None
-    lamb = None
+    for k in latent_dims:
+        for lamb in lambdas:
+            print(f"Training model with k={k}, λ={lamb}...")
+            
+            # Initialize the model with the current k.
+            model = AutoEncoder(num_question=zero_train_matrix.shape[1], k=k)
 
-    train(model, lr, lamb, train_matrix, zero_train_matrix,
-          valid_data, num_epoch)
+            # Set hyperparameters.
+            lr = 0.01     # You can tune this as well.
+            num_epoch = 50  # You can adjust this for your needs.
+
+            # Train the model.
+            train(model, lr, lamb, train_matrix, zero_train_matrix, valid_data, num_epoch)
+
+            # Evaluate on validation set.
+            valid_acc = evaluate(model, zero_train_matrix, valid_data)
+            
+            # Keep track of the best model.
+            if valid_acc > best_valid_acc:
+                best_valid_acc = valid_acc
+                best_model = model
+
+    print(f"Best Validation Accuracy: {best_valid_acc}")
+    # After selecting the best model, you can evaluate it on the test set.
+    test_acc = evaluate(best_model, zero_train_matrix, test_data)
+    print(f"Test Accuracy with best model: {test_acc}")
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
