@@ -127,11 +127,11 @@ def evaluate(data, theta, beta):
 
 
 def main():
-    train_data = load_train_csv("../data")
+    train_data = load_train_csv("data")
     # You may optionally use the sparse matrix.
-    sparse_matrix = load_train_sparse("../data")
-    val_data = load_valid_csv("../data")
-    test_data = load_public_test_csv("../data")
+    sparse_matrix = load_train_sparse("data")
+    val_data = load_valid_csv("data")
+    test_data = load_public_test_csv("data")
 
     #####################################################################
     # TODO:                                                             #

@@ -11,8 +11,7 @@ import torch.utils.data
 
 import numpy as np
 import torch
-# def load_data(base_path="C:/Users/adore/Downloads/starter_code/starter_code/data"):
-def load_data(base_path="../data"):
+def load_data(base_path="data"):
     """ Load the data in PyTorch Tensor.
 
     :return: (zero_train_matrix, train_data, valid_data, test_data)
