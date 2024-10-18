@@ -8,11 +8,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
+import torch.multiprocessing as mp
+import os
 
 import numpy as np
 import torch
+
+os.environ["OMP_NUM_THREADS"] = "2"
+
+
 def load_data(base_path="data"):
-    """ Load the data in PyTorch Tensor.
+    """Load the data in PyTorch Tensor.
 
     :return: (zero_train_matrix, train_data, valid_data, test_data)
         WHERE:
@@ -37,9 +43,10 @@ def load_data(base_path="data"):
 
     return zero_train_matrix, train_matrix, valid_data, test_data
 
+
 class AutoEncoder(nn.Module):
     def __init__(self, num_question, k=100):
-        """ Initialize a class AutoEncoder.
+        """Initialize a class AutoEncoder.
 
         :param num_question: int
         :param k: int
@@ -51,7 +58,7 @@ class AutoEncoder(nn.Module):
         self.h = nn.Linear(k, num_question)
 
     def get_weight_norm(self):
-        """ Return ||W^1||^2 + ||W^2||^2.
+        """Return ||W^1||^2 + ||W^2||^2.
 
         :return: float
         """
@@ -60,7 +67,7 @@ class AutoEncoder(nn.Module):
         return g_w_norm + h_w_norm
 
     def forward(self, inputs):
-        """ Return a forward pass given inputs.
+        """Return a forward pass given inputs.
 
         :param inputs: user vector.
         :return: user vector.
@@ -80,7 +87,7 @@ class AutoEncoder(nn.Module):
 
 
 def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
-    """ Train the neural network, where the objective also includes
+    """Train the neural network, where the objective also includes
     a regularizer.
 
     :param model: Module
@@ -92,8 +99,8 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
     :param num_epoch: int
     :return: None
     """
-    # TODO: Add a regularizer to the cost function. 
-    
+    # TODO: Add a regularizer to the cost function.
+
     # Tell PyTorch you are training the model.
     model.train()
 
@@ -108,7 +115,9 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
 
         # Iterate over all users
         for user_id in range(train_data.shape[0]):
-            inputs = Variable(zero_train_data[user_id]).unsqueeze(0)  # Shape (1, feature_dim)
+            inputs = Variable(zero_train_data[user_id]).unsqueeze(
+                0
+            )  # Shape (1, feature_dim)
             target = inputs.clone()  # Clone to keep the same shape
 
             # Reset gradients to zero
@@ -118,13 +127,17 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
             output = model(inputs)
 
             # Create mask for NaN values in the original train_data
-            nan_mask = torch.isnan(train_data[user_id])  # Get the mask directly from the PyTorch tensor
+            nan_mask = torch.isnan(
+                train_data[user_id]
+            )  # Get the mask directly from the PyTorch tensor
 
             # Ensure that the shapes match before assignment
             if output.shape[1] == target.shape[1]:
                 target[0][nan_mask] = output[0][nan_mask]
             else:
-                raise ValueError(f"Output shape {output.shape} does not match target shape {target.shape}")
+                raise ValueError(
+                    f"Output shape {output.shape} does not match target shape {target.shape}"
+                )
 
             # Compute the reconstruction loss
             loss = criterion(output, target)
@@ -142,7 +155,9 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
 
         # After each epoch, evaluate on validation set
         valid_acc = evaluate(model, zero_train_data, valid_data)
-        print(f"Epoch: {epoch+1}/{num_epoch} \tTraining Loss: {train_loss:.6f}\tValidation Accuracy: {valid_acc:.4f}")
+        print(
+            f"Epoch: {epoch+1}/{num_epoch} \tTraining Loss: {train_loss:.6f}\tValidation Accuracy: {valid_acc:.4f}"
+        )
 
     #####################################################################
     #                       END OF YOUR CODE                            #
@@ -150,7 +165,7 @@ def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
 
 
 def evaluate(model, train_data, valid_data):
-    """ Evaluate the valid_data on the current model.
+    """Evaluate the valid_data on the current model.
 
     :param model: Module
     :param train_data: 2D FloatTensor
@@ -175,50 +190,64 @@ def evaluate(model, train_data, valid_data):
     return correct / float(total)
 
 
+def train_model(k, lamb, zero_train_matrix, train_matrix, valid_data):
+    """Train the model and return the validation accuracy."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    model = AutoEncoder(num_question=zero_train_matrix.shape[1], k=k).to(device)
+    zero_train_matrix = zero_train_matrix.to(device)
+    train_matrix = train_matrix.to(device)
+    lr = 0.01  # Learning rate
+    num_epoch = 50  # Number of epochs
+
+    # Train the model and return the validation accuracy
+    train(model, lr, lamb, train_matrix, zero_train_matrix, valid_data, num_epoch)
+    valid_acc = evaluate(model, zero_train_matrix, valid_data)
+    return valid_acc, model, k, lamb
+
+
 def main():
     zero_train_matrix, train_matrix, valid_data, test_data = load_data()
 
-    #####################################################################
-    # TODO:                                                             #
-    # Try out 5 different k and select the best k using the             #
-    # validation set.                                                   #
-    #####################################################################
-# Hyperparameter tuning.
-    latent_dims = [10, 50, 100, 200, 500]  # Different values for k.
-    lambdas = [0.001, 0.01, 0.1, 1]        # Different values for λ.
+    latent_dims = [28, 43, 54, 105, 72]
+    lambdas = [0.001, 0.01, 0.1, 1]
     best_valid_acc = 0
     best_model = None
+    best_k = None
+    best_lamb = None
 
-    for k in latent_dims:
-        for lamb in lambdas:
-            print(f"Training model with k={k}, λ={lamb}...")
-            
-            # Initialize the model with the current k.
-            model = AutoEncoder(num_question=zero_train_matrix.shape[1], k=k)
+    # Create a Pool of workers
+    with mp.Pool(processes=4) as pool:
+        results = []
+        for k in latent_dims:
+            for lamb in lambdas:
+                result = pool.apply_async(
+                    train_model,
+                    args=(k, lamb, zero_train_matrix, train_matrix, valid_data),
+                )
+                results.append(result)
+        pool.close()
+        pool.join()
 
-            # Set hyperparameters.
-            lr = 0.01     # You can tune this as well.
-            num_epoch = 50  # You can adjust this for your needs.
+        # Retrieve results from all processes
+        for result in results:
+            valid_acc, model, k, lamb = (
+                result.get()
+            )  # This will block until the result is ready
+            print(f"Validation accuracy k={k}, λ={lamb}: {valid_acc:.4f}")
 
-            # Train the model.
-            train(model, lr, lamb, train_matrix, zero_train_matrix, valid_data, num_epoch)
-
-            # Evaluate on validation set.
-            valid_acc = evaluate(model, zero_train_matrix, valid_data)
-            
-            # Keep track of the best model.
+            # Keep track of the best model
             if valid_acc > best_valid_acc:
                 best_valid_acc = valid_acc
                 best_model = model
+                best_k = k
+                best_lamb = lamb
 
-    print(f"Best Validation Accuracy: {best_valid_acc}")
-    # After selecting the best model, you can evaluate it on the test set.
+    print(f"Best Validation Accuracy with k={best_k}, λ={best_lamb}: {best_valid_acc}")
     test_acc = evaluate(best_model, zero_train_matrix, test_data)
     print(f"Test Accuracy with best model: {test_acc}")
-    #####################################################################
-    #                       END OF YOUR CODE                            #
-    #####################################################################
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn")  # Set the start method for multiprocessing
     main()
