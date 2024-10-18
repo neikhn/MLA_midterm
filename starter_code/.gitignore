@@ -1,5 +1,5 @@
 __pycache__/
-**/__pycache__/
-**/**/__pycache__/
+part_a/__pycache__/*
+part_a/__pycache__
 **/*.pyc
 .venv
