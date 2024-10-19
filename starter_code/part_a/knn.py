@@ -41,55 +41,96 @@ def knn_impute_by_item(matrix, valid_data, k):
     # TODO:                                                             #
     # Implement the function as described in the docstring.             #
     #####################################################################
+    """ Fill in missing values using k-nearest neighbors, weighting neighbors based on their similarity."""
+    
     num_students, num_questions = matrix.shape
-    
-    # Step 1: Calculate the similarity between questions (columns in the matrix)
-    # Using cosine similarity for similarity between questions
     question_similarity = np.zeros((num_questions, num_questions))
-    
+
+    # Calculate similarity between questions using cosine similarity
     for i in range(num_questions):
         for j in range(i + 1, num_questions):
-            valid_entries = (~np.isnan(matrix[:, i])) & (~np.isnan(matrix[:, j]))  # Mask to filter valid entries
-            if np.any(valid_entries):  # Check if there are any valid comparisons
+            valid_entries = (~np.isnan(matrix[:, i])) & (~np.isnan(matrix[:, j]))
+            if np.any(valid_entries):
                 dot_product = np.dot(matrix[valid_entries, i], matrix[valid_entries, j])
                 norm_i = np.linalg.norm(matrix[valid_entries, i])
                 norm_j = np.linalg.norm(matrix[valid_entries, j])
-                if norm_i > 0 and norm_j > 0:  # Avoid division by zero
+                if norm_i > 0 and norm_j > 0:
                     question_similarity[i, j] = dot_product / (norm_i * norm_j)
-                    question_similarity[j, i] = question_similarity[i, j]  # Symmetry
+                    question_similarity[j, i] = question_similarity[i, j]
 
-    # Step 2: Impute missing values based on k-nearest neighbors (similar questions)
     matrix_imputed = matrix.copy()
 
+    # Impute missing values using weighted k-nearest neighbors
     for question_id in range(num_questions):
-        missing_students = np.isnan(matrix[:, question_id])  # Find missing values for the current question
+        missing_students = np.isnan(matrix[:, question_id])
 
         for student_id in np.where(missing_students)[0]:
-            # Find the k most similar questions that the student has answered
             answered_questions = ~np.isnan(matrix[student_id, :])
             similarity_scores = question_similarity[question_id, answered_questions]
-            
+            distances = 1 - similarity_scores  # Using distance as 1 - similarity
+
             if len(similarity_scores) > 0:
-                # Get the indices of the k most similar questions
-                top_k_indices = np.argsort(similarity_scores)[-k:]  # Indices of k most similar questions
+                top_k_indices = np.argsort(similarity_scores)[-k:]
                 top_k_similarities = similarity_scores[top_k_indices]
                 top_k_answers = matrix[student_id, answered_questions][top_k_indices]
 
-                # Weighted average to impute the missing value
-                if np.sum(top_k_similarities) > 0:
-                    matrix_imputed[student_id, question_id] = np.dot(top_k_similarities, top_k_answers) / np.sum(top_k_similarities)
+                # Apply weighted average with weight decay
+                weights = top_k_similarities / (1 + distances[top_k_indices])
+                if np.sum(weights) > 0:
+                    matrix_imputed[student_id, question_id] = np.dot(weights, top_k_answers) / np.sum(weights)
                 else:
-                    # If all similarities are zero, use a simple average of the top k answers
                     matrix_imputed[student_id, question_id] = np.mean(top_k_answers)
-    
-    # Step 3: Evaluate the accuracy of the imputed matrix
+
     acc = sparse_matrix_evaluate(valid_data, matrix_imputed)
-    print("Validation Accuracy: {}".format(acc))
+    print("Validation Accuracy with Weighting: {}".format(acc)) 
     #####################################################################
     #                       END OF YOUR CODE                            #
     #####################################################################
     return acc
 
+def knn_impute_by_item_weighted(matrix, valid_data, k):
+    """Fill in the missing values using k-Nearest Neighbors based on weighted question similarity."""
+    num_students, num_questions = matrix.shape
+    question_similarity = np.zeros((num_questions, num_questions))
+
+    # Calculate similarity between questions using cosine similarity
+    for i in range(num_questions):
+        for j in range(i + 1, num_questions):
+            valid_entries = (~np.isnan(matrix[:, i])) & (~np.isnan(matrix[:, j]))
+            if np.any(valid_entries):
+                dot_product = np.dot(matrix[valid_entries, i], matrix[valid_entries, j])
+                norm_i = np.linalg.norm(matrix[valid_entries, i])
+                norm_j = np.linalg.norm(matrix[valid_entries, j])
+                if norm_i > 0 and norm_j > 0:
+                    question_similarity[i, j] = dot_product / (norm_i * norm_j)
+                    question_similarity[j, i] = question_similarity[i, j]
+
+    matrix_imputed = matrix.copy()
+
+    # Impute missing values using weighted k-nearest neighbors
+    for question_id in range(num_questions):
+        missing_students = np.isnan(matrix[:, question_id])
+
+        for student_id in np.where(missing_students)[0]:
+            answered_questions = ~np.isnan(matrix[student_id, :])
+            similarity_scores = question_similarity[question_id, answered_questions]
+
+            if len(similarity_scores) > 0:
+                top_k_indices = np.argsort(similarity_scores)[-k:]  # Get indices of top k similar questions
+                top_k_similarities = similarity_scores[top_k_indices]
+                top_k_answers = matrix[student_id, answered_questions][top_k_indices]
+
+                # Apply weighted average based on similarity scores
+                if np.sum(top_k_similarities) > 0:
+                    weights = top_k_similarities / np.sum(top_k_similarities)
+                    matrix_imputed[student_id, question_id] = np.dot(weights, top_k_answers)
+                else:
+                    # If all similarities are 0, fall back to unweighted average
+                    matrix_imputed[student_id, question_id] = np.mean(top_k_answers)
+
+    acc = sparse_matrix_evaluate(valid_data, matrix_imputed)
+    print("Validation Accuracy with Weighting (Item-based, k={}): {}".format(k, acc))
+    return acc
 
 def main():
     # Verify the correct data path
@@ -101,89 +142,69 @@ def main():
     val_data = load_valid_csv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"))
     test_data = load_public_test_csv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"))
 
-    print("Sparse matrix:")
-    print(sparse_matrix)
-    print("Shape of sparse matrix:")
-    print(sparse_matrix.shape)
-
-    #####################################################################
-    # TODO:                                                             #
-    # Compute the validation accuracy for each k. Then pick k* with     #
-    # the best performance and report the test accuracy with the        #
-    # chosen k*.                                                        #
-    #####################################################################
-    # Test different k values for both user-based and item-based filtering.
+    print("Sparse matrix shape: ", sparse_matrix.shape)
 
     k_values = [1, 6, 11, 16, 21, 26]
-    
+
     # Store accuracies for plotting
     user_accs = []
     item_accs = []
+    item_accs_with_weights = []
+
+    # Best k's and accuracies
+    best_k_user, best_acc_user = None, 0
+    best_k_item, best_acc_item = None, 0
+    best_k_item_weighted, best_acc_item_weighted = None, 0
 
     # User-based KNN
-    best_k_user = None
-    best_acc_user = 0
     print("\nUser-based KNN Imputation (validation stage):")
     for k in k_values:
         acc = knn_impute_by_user(sparse_matrix, val_data, k)
-        if acc is not None:  # Ensure the function returns a valid accuracy
-            user_accs.append(acc)
-        else:
-            print(f"User-based KNN returned None for k={k}.")
+        user_accs.append(acc)
         if acc > best_acc_user:
             best_acc_user = acc
             best_k_user = k
 
-    print(f"\nBest User-based KNN validation accuracy: {best_acc_user} (k = {best_k_user})")
-    print("User-based accuracies:", user_accs)
-    
     # Item-based KNN
-    best_k_item = None
-    best_acc_item = 0
     print("\nItem-based KNN Imputation (validation stage):")
     for k in k_values:
         acc = knn_impute_by_item(sparse_matrix, val_data, k)
-        if acc is not None:  # Ensure the function returns a valid accuracy
-            item_accs.append(acc)
-        else:
-            print(f"Item-based KNN returned None for k={k}.")
+        item_accs.append(acc)
         if acc > best_acc_item:
             best_acc_item = acc
             best_k_item = k
 
-    print(f"\nBest Item-based KNN validation accuracy: {best_acc_item} (k = {best_k_item})")
-    print("Item-based accuracies:", item_accs)
-    
-    # Check that the accuracy lists have the correct lengths before plotting
-    if len(user_accs) != len(k_values) or len(item_accs) != len(k_values):
-        print("Error: The length of accuracies does not match the length of k_values.")
-        print(f"user_accs: {len(user_accs)}, item_accs: {len(item_accs)}, k_values: {len(k_values)}")
-        return
-    
+    # Item-based KNN with weighting
+    print("\nItem-based KNN Imputation with Weighting (validation stage):")
+    for k in k_values:
+        acc = knn_impute_by_item_weighted(sparse_matrix, val_data, k)
+        item_accs_with_weights.append(acc)
+        if acc > best_acc_item_weighted:
+            best_acc_item_weighted = acc
+            best_k_item_weighted = k
+
     # Plotting the accuracies
     plt.figure(figsize=(10, 6))
     plt.plot(k_values, user_accs, label="User-based KNN", marker='o')
     plt.plot(k_values, item_accs, label="Item-based KNN", marker='s')
+    plt.plot(k_values, item_accs_with_weights, label="Item-based KNN with Weighting", marker='x')
     plt.xlabel('k')
     plt.ylabel('Validation Accuracy')
-    plt.title('Validation Accuracy vs k for User-based and Item-based KNN')
+    plt.title('Validation Accuracy vs k for KNN Imputation Methods')
     plt.legend()
     plt.grid(True)
     plt.show()
 
-    # Evaluate the model on the test data using the best k found for both methods.
-    print("\nEvaluating on test data with best k:")
-    
-    # User-based KNN test accuracy
+    # Evaluate on the test data
+    print("\nEvaluating on test data with best k values:")
     user_test_acc = knn_impute_by_user(sparse_matrix, test_data, best_k_user)
     print(f"Test Accuracy (User-based, k={best_k_user}): {user_test_acc}")
 
-    # Item-based KNN test accuracy
     item_test_acc = knn_impute_by_item(sparse_matrix, test_data, best_k_item)
     print(f"Test Accuracy (Item-based, k={best_k_item}): {item_test_acc}")
-    #####################################################################
-    #                       END OF YOUR CODE                            #
-    #####################################################################
+
+    item_test_acc_weighted = knn_impute_by_item_weighted(sparse_matrix, test_data, best_k_item_weighted)
+    print(f"Test Accuracy (Item-based with Weighting, k={best_k_item_weighted}): {item_test_acc_weighted}")
 
 
 if __name__ == "__main__":
