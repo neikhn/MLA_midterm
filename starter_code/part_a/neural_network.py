@@ -1,24 +1,19 @@
-# If you encounter pathing error, try the below 3 line for Python to locate the module
-# import sys
-# import os
-# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import *
 from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
-import torch.multiprocessing as mp
-import os
 
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 
-os.environ["OMP_NUM_THREADS"] = "2"
-
-
-def load_data(base_path="data"):
-    """Load the data in PyTorch Tensor.
+def load_data(base_path="C:/Users/adore/Downloads/starter_code/starter_code/data"):
+    """ Load the data in PyTorch Tensor.
 
     :return: (zero_train_matrix, train_data, valid_data, test_data)
         WHERE:
@@ -43,129 +38,118 @@ def load_data(base_path="data"):
 
     return zero_train_matrix, train_matrix, valid_data, test_data
 
-
 class AutoEncoder(nn.Module):
-    def __init__(self, num_question, k=100):
-        """Initialize a class AutoEncoder.
+    def __init__(self, num_question, latent_dim=100):
+        """ Initialize a class AutoEncoder.
 
         :param num_question: int
-        :param k: int
+        :param latent_dim: int
         """
         super(AutoEncoder, self).__init__()
 
-        # Define linear functions.
-        self.g = nn.Linear(num_question, k)
-        self.h = nn.Linear(k, num_question)
+        self.encoder = nn.Linear(num_question, latent_dim)
+        self.decoder = nn.Linear(latent_dim, num_question)
 
     def get_weight_norm(self):
-        """Return ||W^1||^2 + ||W^2||^2.
+        """ Return the sum of L2 norms of the weights for encoder and decoder.
 
         :return: float
         """
-        g_w_norm = torch.norm(self.g.weight, 2) ** 2
-        h_w_norm = torch.norm(self.h.weight, 2) ** 2
-        return g_w_norm + h_w_norm
+        encoder_norm = torch.norm(self.encoder.weight, 2) ** 2
+        decoder_norm = torch.norm(self.decoder.weight, 2) ** 2
+        return encoder_norm + decoder_norm
 
     def forward(self, inputs):
-        """Return a forward pass given inputs.
+        """ Return a forward pass given inputs.
 
         :param inputs: user vector.
         :return: user vector.
         """
-        #####################################################################
-        # TODO:                                                             #
-        # Implement the function as described in the docstring.             #
-        # Use sigmoid activations for f and g.                              #
-        #####################################################################
-        # Apply the first linear transformation, followed by sigmoid activation.
-        latent = torch.sigmoid(self.g(inputs))
-        out = torch.sigmoid(self.h(latent))
-        #####################################################################
-        #                       END OF YOUR CODE                            #
-        #####################################################################
-        return out
+        # Encode the input with sigmoid activation.
+        encoded = torch.sigmoid(self.encoder(inputs))
+        # Decode the latent representation back to the output space using sigmoid.
+        reconstructed = torch.sigmoid(self.decoder(encoded))
+        return reconstructed
 
 
-def train(model, lr, lamb, train_data, zero_train_data, valid_data, num_epoch):
-    """Train the neural network, where the objective also includes
+def train(model, learning_rate, reg_param, train_data, zero_train_data, valid_data, epochs):
+    """ Train the neural network, where the objective also includes
     a regularizer.
 
     :param model: Module
-    :param lr: float
-    :param lamb: float
+    :param learning_rate: float
+    :param reg_param: float
     :param train_data: 2D FloatTensor
     :param zero_train_data: 2D FloatTensor
     :param valid_data: Dict
-    :param num_epoch: int
+    :param epochs: int
     :return: None
     """
-    # TODO: Add a regularizer to the cost function.
-
-    # Tell PyTorch you are training the model.
-    model.train()
-
-    # Define optimizer.
-    optimizer = optim.SGD(model.parameters(), lr=lr)
-
-    # Loss function: Mean squared error (MSE).
+    model.train()  # Set the model to training mode
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate)
     criterion = nn.MSELoss()
+    
+    train_loss_list = []
+    valid_acc_list = []
 
-    for epoch in range(num_epoch):
-        train_loss = 0.0
-
-        # Iterate over all users
+    for epoch in range(epochs):
+        cumulative_loss = 0.0
         for user_id in range(train_data.shape[0]):
-            inputs = Variable(zero_train_data[user_id]).unsqueeze(
-                0
-            )  # Shape (1, feature_dim)
-            target = inputs.clone()  # Clone to keep the same shape
+            input_vector = Variable(zero_train_data[user_id]).unsqueeze(0)
+            target_vector = input_vector.clone()
 
-            # Reset gradients to zero
             optimizer.zero_grad()
+            predicted_output = model(input_vector)
 
-            # Forward pass through the model
-            output = model(inputs)
-
-            # Create mask for NaN values in the original train_data
-            nan_mask = torch.isnan(
-                train_data[user_id]
-            )  # Get the mask directly from the PyTorch tensor
-
-            # Ensure that the shapes match before assignment
-            if output.shape[1] == target.shape[1]:
-                target[0][nan_mask] = output[0][nan_mask]
+            missing_mask = torch.isnan(train_data[user_id])
+            if predicted_output.shape[1] == target_vector.shape[1]:
+                target_vector[0][missing_mask] = predicted_output[0][missing_mask]
             else:
-                raise ValueError(
-                    f"Output shape {output.shape} does not match target shape {target.shape}"
-                )
+                raise ValueError(f"Output shape {predicted_output.shape} does not match target shape {target_vector.shape}")
+            
+            # Calculate loss
+            loss = criterion(predicted_output, target_vector)
+            regularization_loss = model.get_weight_norm()
+            total_loss = loss + reg_param * regularization_loss
+            
+            total_loss.backward()  # Backpropagation
+            optimizer.step()  # Update weights
 
-            # Compute the reconstruction loss
-            loss = criterion(output, target)
+            cumulative_loss += total_loss.item()
 
-            # Add L2 regularization term
-            weight_norm = model.get_weight_norm()
-            loss += lamb * weight_norm
-
-            # Backpropagation
-            loss.backward()
-            optimizer.step()
-
-            # Accumulate the training loss
-            train_loss += loss.item()
-
-        # After each epoch, evaluate on validation set
+        # Track validation accuracy
         valid_acc = evaluate(model, zero_train_data, valid_data)
-        print(
-            f"Epoch: {epoch+1}/{num_epoch} \tTraining Loss: {train_loss:.6f}\tValidation Accuracy: {valid_acc:.4f}"
-        )
+        train_loss_list.append(cumulative_loss)
+        valid_acc_list.append(valid_acc)
+        print(f"Epoch: {epoch + 1}/{epochs} \tTraining Loss: {cumulative_loss:.6f}\tValidation Accuracy: {valid_acc:.4f}")
 
-    #####################################################################
-    #                       END OF YOUR CODE                            #
-    #####################################################################
+    # Plot loss and accuracy graphs
+    plot_graph(train_loss_list, valid_acc_list)
+
+
+def plot_graph(train_loss, valid_acc):
+    """Plot the training loss and validation accuracy"""
+    epochs = len(train_loss)
+    plt.figure(figsize=(12, 6))
+
+    plt.subplot(1, 2, 1)
+    plt.plot(range(epochs), train_loss, label='Training Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training Loss per Epoch')
+
+    plt.subplot(1, 2, 2)
+    plt.plot(range(epochs), valid_acc, label='Validation Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.title('Validation Accuracy per Epoch')
+
+    plt.tight_layout()
+    plt.show()
 
 
 def evaluate(model, train_data, valid_data):
-    """Evaluate the valid_data on the current model.
+    """ Evaluate the valid_data on the current model.
 
     :param model: Module
     :param train_data: 2D FloatTensor
@@ -173,81 +157,49 @@ def evaluate(model, train_data, valid_data):
     question_id: list, is_correct: list}
     :return: float
     """
-    # Tell PyTorch you are evaluating the model.
-    model.eval()
-
+    model.eval()  # Set the model to evaluation mode
     total = 0
     correct = 0
 
-    for i, u in enumerate(valid_data["user_id"]):
-        inputs = Variable(train_data[u]).unsqueeze(0)
-        output = model(inputs)
+    for i, user_id in enumerate(valid_data["user_id"]):
+        input_vector = Variable(train_data[user_id]).unsqueeze(0)
+        predicted_output = model(input_vector)
 
-        guess = output[0][valid_data["question_id"][i]].item() >= 0.5
-        if guess == valid_data["is_correct"][i]:
+        prediction = predicted_output[0][valid_data["question_id"][i]].item() >= 0.5
+        if prediction == valid_data["is_correct"][i]:
             correct += 1
         total += 1
+
     return correct / float(total)
-
-
-def train_model(k, lamb, zero_train_matrix, train_matrix, valid_data):
-    """Train the model and return the validation accuracy."""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = AutoEncoder(num_question=zero_train_matrix.shape[1], k=k).to(device)
-    zero_train_matrix = zero_train_matrix.to(device)
-    train_matrix = train_matrix.to(device)
-    lr = 0.01  # Learning rate
-    num_epoch = 50  # Number of epochs
-
-    # Train the model and return the validation accuracy
-    train(model, lr, lamb, train_matrix, zero_train_matrix, valid_data, num_epoch)
-    valid_acc = evaluate(model, zero_train_matrix, valid_data)
-    return valid_acc, model, k, lamb
 
 
 def main():
     zero_train_matrix, train_matrix, valid_data, test_data = load_data()
 
-    latent_dims = [28, 43, 54, 105, 72]
-    lambdas = [0.001, 0.01, 0.1, 1]
-    best_valid_acc = 0
-    best_model = None
-    best_k = None
-    best_lamb = None
+    # latent_dimensions = [1000]
+    # regularization_params = [0.001]
+    latent_dimensions = [1, 10, 100, 500, 1000]
+    regularization_params = [0.001, 0.01, 0.1, 1]
+    best_valid_accuracy = 0
+    optimal_model = None
+    
+    for latent_dim in latent_dimensions:
+        for reg_param in regularization_params:
+            print(f"Training model with latent dimension={latent_dim}, λ={reg_param}...")
+            model = AutoEncoder(num_question=zero_train_matrix.shape[1], latent_dim=latent_dim)
+            learning_rate = 0.02
+            epochs = 50
+            train(model, learning_rate, reg_param, train_matrix, zero_train_matrix, valid_data, epochs)
+            validation_accuracy = evaluate(model, zero_train_matrix, valid_data)
 
-    # Create a Pool of workers
-    with mp.Pool(processes=4) as pool:
-        results = []
-        for k in latent_dims:
-            for lamb in lambdas:
-                result = pool.apply_async(
-                    train_model,
-                    args=(k, lamb, zero_train_matrix, train_matrix, valid_data),
-                )
-                results.append(result)
-        pool.close()
-        pool.join()
+            if validation_accuracy > best_valid_accuracy:
+                best_valid_accuracy = validation_accuracy
+                optimal_model = model
 
-        # Retrieve results from all processes
-        for result in results:
-            valid_acc, model, k, lamb = (
-                result.get()
-            )  # This will block until the result is ready
-            print(f"Validation accuracy k={k}, λ={lamb}: {valid_acc:.4f}")
-
-            # Keep track of the best model
-            if valid_acc > best_valid_acc:
-                best_valid_acc = valid_acc
-                best_model = model
-                best_k = k
-                best_lamb = lamb
-
-    print(f"Best Validation Accuracy with k={best_k}, λ={best_lamb}: {best_valid_acc}")
-    test_acc = evaluate(best_model, zero_train_matrix, test_data)
-    print(f"Test Accuracy with best model: {test_acc}")
+    print(f"Best Validation Accuracy: {best_valid_accuracy}")
+    test_accuracy = evaluate(optimal_model, zero_train_matrix, test_data)
+    print(f"Test Accuracy with the optimal model: {test_accuracy}")
 
 
 if __name__ == "__main__":
-    mp.set_start_method("spawn")  # Set the start method for multiprocessing
     main()
