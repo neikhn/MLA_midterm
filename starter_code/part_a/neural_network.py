@@ -1,6 +1,7 @@
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# If you have pathing error, add the 3 below lines 
+# import sys
+# import os
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from utils import *
 from torch.autograd import Variable
 import torch.nn as nn
@@ -12,7 +13,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-def load_data(base_path="C:/Users/adore/Downloads/starter_code/starter_code/data"):
+def load_data(base_path="../data"):
     """ Load the data in PyTorch Tensor.
 
     :return: (zero_train_matrix, train_data, valid_data, test_data)
